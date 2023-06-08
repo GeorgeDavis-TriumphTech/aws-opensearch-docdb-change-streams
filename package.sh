@@ -1,6 +1,6 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-S3_CLOUDFORMATION_BUCKET=skulabs-cloudformation-documentdb-opensearch-poc
-S3_LAMBDA_BUCKET=skulabs-documentdb-opensearc-s3bucketfunctioncode-qrf6bh6mqp1u
+S3_CLOUDFORMATION_BUCKET=<YOUR_S3_CLOUDFORMATION_BUCKET>
+S3_LAMBDA_BUCKET=<YOUR_S3_LAMBDA_CODE_BUCKET>
 
 BUILD_DOCDBSQSWRITERLAMBDA=1
 UPLOAD_DOCDBSQSWRITERLAMBDA=1
