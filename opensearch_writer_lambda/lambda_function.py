@@ -163,47 +163,15 @@ def delete_s3_object_with_version(bucket_name, bucket_path, version_id):
         )
     except Exception as ex:
         logger.error('Exception in deleting S3 object: {}'.format(ex))
-        # send_sns_alert(str(ex))
+        send_sns_alert(str(ex))
         raise
 
 def lambda_handler(event, context):
     """Read any new events from DocumentDB and apply them to an streaming/datastore endpoint."""
     
     events_processed = 0
-    folder = None
-    filename = None
 
     logger.debug('Received event: {}'.format(json.dumps(event)))
-
-    # {
-    #     "_id": {
-    #         "_data": "016478047e00000001010000000100004302"
-    #     },
-    #     "operationType": "insert",
-    #     "clusterTime": {
-    #         "$timestamp": {
-    #             "t": 1685587070,
-    #             "i": 1
-    #         }
-    #     },
-    #     "ns": {
-    #         "db": "sampledb",
-    #         "coll": "tweets"
-    #     },
-    #     "documentKey": {
-    #         "_id": {
-    #             "$oid": "6478047e6fdfa18915d3b7e2"
-    #         }
-    #     },
-    #     "s3Metadata": {
-    #         "bucketName": "skulabs-documentdb-opensear-s3bucketstreamingdata-1js807ywh8285",
-    #         "s3ObjectKey": "sampledb/tweets/2023/06/03/6478047e6fdfa18915d3b7e2",
-    #         "s3ObjectVersionId": "elPq4C796rDO.sKukuvsroRM9VuenaQo",
-    #         "database": "sampledb",
-    #         "collection": "tweets",
-    #         "docId": "6478047e6fdfa18915d3b7e2"
-    #     }
-    # }
 
     try:
 
