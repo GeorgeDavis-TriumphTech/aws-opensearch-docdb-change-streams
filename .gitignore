@@ -162,3 +162,6 @@ cython_debug/
 # Custom extensions and files
 **/cfn-output.json
 **/*.zip
+
+# macOS files
+**/.DS_Store
