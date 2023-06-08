@@ -46,6 +46,16 @@ Parameters:
     Default: 600
     Description: TriggerLambda triggers the DocumentDB Reader Lambda function on regular intervals set by TriggerLambdaInterval parameter.
 
+  OpenSearchMasterUserName:  
+    Type: Number
+    Default: 600
+    Description: TriggerLambda triggers the DocumentDB Reader Lambda function on regular intervals set by TriggerLambdaInterval parameter.
+
+  OpenSearchMasterUserPassword:  
+    Type: Number
+    Default: 600
+    Description: TriggerLambda triggers the DocumentDB Reader Lambda function on regular intervals set by TriggerLambdaInterval parameter.
+
 Conditions:
   CreateCloud9Role: !Equals [!Ref ExistingCloud9Role, NO]
   CreateCloud9InstanceProfile: !Equals [!Ref ExistingCloud9Role, NO]
@@ -731,8 +741,8 @@ Resources:
         Enabled: true
         InternalUserDatabaseEnabled: true
         MasterUserOptions:
-          MasterUserName: skulabsPOCAdmin
-          MasterUserPassword: skulabsPOCSecretPhr@s3
+          MasterUserName: !Ref OpenSearchMasterUserName
+          MasterUserPassword: !Ref OpenSearchMasterUserPassword
       SoftwareUpdateOptions:
         AutoSoftwareUpdateEnabled: True # Set to True for testing environments. Not recommended for production environments due to stability reasons.
       # VPCOptions:
@@ -747,7 +757,7 @@ Resources:
   # AOSSIAMUser:
   #   Type: 'AWS::IAM::User'
   #   Properties:
-  #     UserName: skulabsPOCAossAdmin
+  #     UserName: !Ref OpenSearchMasterUserName
 
   # DataAccessPolicy:
   #   Type: 'AWS::OpenSearchServerless::AccessPolicy'
@@ -756,8 +766,8 @@ Resources:
   #     Type: data
   #     Description: Access policy for sampledb-tweets collection
   #     Policy: !Sub >-
-  #       [{"Description":"Access for skulabs POC AOSS Admin user","Rules":[{"ResourceType":"index","Resource":["index/*/*"],"Permission":["aoss:*"]}, {"ResourceType":"collection","Resource":["collection/sampledb-tweets"],"Permission":["aoss:*"]}],
-  #       "Principal":["arn:aws:iam::${AWS::AccountId}:user/skulabsPOCAossAdmin"]}]
+  #       [{"Description":"Access for DocDB AOSS Admin user","Rules":[{"ResourceType":"index","Resource":["index/*/*"],"Permission":["aoss:*"]}, {"ResourceType":"collection","Resource":["collection/sampledb-tweets"],"Permission":["aoss:*"]}],
+  #       "Principal":["arn:aws:iam::${AWS::AccountId}:user/${OpenSearchMasterUserName}"]}]
 
   # NetworkPolicy:
   #   Type: 'AWS::OpenSearchServerless::SecurityPolicy'
@@ -1033,8 +1043,8 @@ Resources:
           AWS_REGION_NAME: !Ref AWS::Region
           SNS_TOPIC_ARN_ALERT: !Ref SNSTopicAlert
           OPENSEARCH_URI: !GetAtt OpenSearchDomain.DomainEndpoint
-          OPENSEARCH_USER: skulabsPOCAdmin
-          OPENSEARCH_PASS: skulabsPOCSecretPhr@s3
+          OPENSEARCH_USER: !Ref OpenSearchMasterUserName
+          OPENSEARCH_PASS: !Ref OpenSearchMasterUserPassword
           LOGLEVEL: DEBUG
       FunctionName: opensearch-writer-lambda
       MemorySize: 128
