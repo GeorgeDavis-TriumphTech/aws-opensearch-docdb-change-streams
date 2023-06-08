@@ -1,0 +1,1163 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: This stack deploys the baseline infrastructure to be used for Amazon DocumentDB and Amazon OpenSearch.
+
+Parameters:
+
+  DocDBIdentifier:
+    Type: String
+    Description: The cluster identifier. This parameter is stored as a lowercase string. (the first character must be a letter. Cannot end with a hyphen or contain two consecutive hyphens.)
+
+  DocDBUsername:
+    Type: String
+    Description: Username for the Amazon DocumentDB cluster (the first character must be a letter. Cannot be a reserved word for the chosen database engine.)
+    MinLength: 1
+    MaxLength: 63
+
+  DocDBPassword:
+    Type: String
+    Description: Password for the Amazon DocumentDB cluster (this password can contain any printable ASCII character except forward slash (/), double quote ("), or the "at" symbol (@).)
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 100
+
+  ExistingCloud9Role:
+    Type: String
+    Default: NO
+    Description: Indicate whether AWSCloud9SSMAccessRole is already created or not (you can verify this in IAM > Roles).
+    AllowedValues:
+      - YES
+      - NO
+
+  SQSTimeout:
+    Type: Number
+    Default: 300
+    Description: Lambda and SQS Visibility Timeout needs to be the same or SQS Visibility timeout > Lambda runtime timeout.
+
+  TriggerLambdaInterval:  
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 59
+    Description: TriggerLambda triggers the DocumentDB Reader Lambda function at this interval (in Seconds), recursively. Use AWS::Events::Rule for values more than 59 seconds.
+
+  TriggerLambdaTimeout:  
+    Type: Number
+    Default: 600
+    Description: TriggerLambda triggers the DocumentDB Reader Lambda function on regular intervals set by TriggerLambdaInterval parameter.
+
+Conditions:
+  CreateCloud9Role: !Equals [!Ref ExistingCloud9Role, NO]
+  CreateCloud9InstanceProfile: !Equals [!Ref ExistingCloud9Role, NO]
+  CreateCloud9Policy: !Equals [!Ref ExistingCloud9Role, YES]
+
+Mappings:
+
+  SubnetConfig:
+    VPC:
+      CIDR: '10.0.0.0/16'
+    PublicOne:
+      CIDR: '10.0.0.0/24'
+    PublicTwo:
+      CIDR: '10.0.1.0/24'
+    PublicThree:
+      CIDR: '10.0.2.0/24'
+    PrivateOne:
+      CIDR: '10.0.100.0/24'
+    PrivateTwo:
+      CIDR: '10.0.101.0/24'
+    PrivateThree:
+      CIDR: '10.0.102.0/24'
+
+Resources:
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap ['SubnetConfig', 'VPC', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Sub VPC-${AWS::StackName}
+
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 0
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicOne', 'CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub PublicOne-${AWS::StackName}
+
+  PublicSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 1
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicTwo', 'CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub PublicTwo-${AWS::StackName}
+
+  PublicSubnetThree:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 2
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicThree', 'CIDR']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub PublicThree-${AWS::StackName}
+
+  PrivateSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 0
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ['SubnetConfig', 'PrivateOne', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Sub PrivateOne-${AWS::StackName}
+
+  PrivateSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 1
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ['SubnetConfig', 'PrivateTwo', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Sub PrivateTwo-${AWS::StackName}
+
+  PrivateSubnetThree:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 2
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap ['SubnetConfig', 'PrivateThree', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Sub PrivateThree-${AWS::StackName}
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  
+  GatewayAttachement:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachement
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  
+  PublicSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+  
+  PublicSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetTwo
+      RouteTableId: !Ref PublicRouteTable
+  
+  PublicSubnetThreeRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetThree
+      RouteTableId: !Ref PublicRouteTable
+
+  NatGatewayOneAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+        Domain: vpc
+  
+  NatGatewayTwoAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+        Domain: vpc
+  
+  NatGatewayThreeAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+        Domain: vpc
+  
+  NatGatewayOne:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayOneAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetOne
+  
+  NatGatewayTwo:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayTwoAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetTwo
+  
+  NatGatewayThree:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayThreeAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetThree
+  
+  PrivateRouteTableOne:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  
+  PrivateRouteOne:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayOne
+  
+  PrivateRouteTableOneAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      SubnetId: !Ref PrivateSubnetOne
+  
+  PrivateRouteTableTwo:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  
+  PrivateRouteTwo:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayTwo
+  
+  PrivateRouteTableTwoAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      SubnetId: !Ref PrivateSubnetTwo
+  
+  PrivateRouteTableThree:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  
+  PrivateRouteThree:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableThree
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayThree
+  
+  PrivateRouteTableThreeAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableThree
+      SubnetId: !Ref PrivateSubnetThree
+
+  SNSTopicAlert:
+    Type: AWS::SNS::Topic
+
+  EventBridgeSchedulerRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: EventBridgeSchedulerRuleRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource:
+                  - !GetAtt TriggerLambdaFunction.Arn
+
+  CustomResourceLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: {Service: [lambda.amazonaws.com]}
+          Action: ['sts:AssumeRole']
+      Path: "/"
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  TimeoutCalcFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt CustomResourceLambdaExecutionRole.Arn
+      FunctionName: CloudFormationCustomResource-TimeoutSecondsToCronExprConverter
+      Code:
+        ZipFile: |
+          import datetime
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.DEBUG)
+
+          def lambda_handler(event, context):
+              """
+                  Convert event.ResourceProperties.Seconds into a cron expression acceptable by AWS::Events::Rule
+              """
+              try:
+                  logger.debug("Event: {}".format(event))
+                  seconds = int(event["ResourceProperties"]["Seconds"])    
+
+                  cron_str = str(datetime.timedelta(seconds = seconds)).split(":")    
+                  cron_hours = cron_str[0] if cron_str[0] != '0' else '*'
+                  cron_minutes = cron_str[1] if cron_str[1] != '0' else '*'
+
+                  response_data = {"Value": "cron({} {} * * * ? *)".format(cron_minutes, cron_hours)}
+                  logger.info("Response Data: {}".format(response_data))    
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {"Value": "cron(0/{} {} * * ? *)".format(cron_minutes, cron_hours)}, None)
+
+              except Exception as e:        
+                  logger.error(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+      Runtime: python3.10
+      Description: "Custom Resource - Convert Lambda timeout from Seconds to cron expression for the Cloudformation template"
+
+  TimeoutSecondsToCronExprConverter:
+    Type: Custom::TimeoutSecondsToCronExprConverter
+    Properties:
+      ServiceToken: !GetAtt TimeoutCalcFunction.Arn
+      Seconds: !Ref TriggerLambdaTimeout
+
+  EventBridgeSchedulerRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: Lambda Trigger based on CloudWatch Events Scheduler
+      Name: InvokeTriggerLambdaFunctionTrigger
+      RoleArn: !GetAtt EventBridgeSchedulerRuleRole.Arn
+      ScheduleExpression: !GetAtt TimeoutSecondsToCronExprConverter.Value
+      State: ENABLED
+      Targets:
+        - 
+          Arn: !GetAtt TriggerLambdaFunction.Arn
+          Id: "TriggerLambdaFunction"
+
+  DocDBSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub "DocDBSecret-${AWS::StackName}"
+      Description: This secret has the credentials for the documentDB cluster
+      SecretString: !Sub '{"username": "${DocDBUsername}", "password":"${DocDBPassword}", "ssl": true}'
+
+  SecretDocDBClusterAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DocDBSecret
+      TargetId: !Ref DocumentDBCluster
+      TargetType: AWS::DocDB::DBCluster
+
+  AWSCloud9SSMAccessRole:
+    Type: AWS::IAM::Role
+    Condition: CreateCloud9Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+                - cloud9.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCloud9SSMInstanceProfile
+      RoleName: AWSCloud9SSMAccessRole
+      Path: /service-role/
+
+  AWSCloud9RolePolicyNew:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: CreateCloud9Role
+    DependsOn: AWSCloud9SSMAccessRole
+    Properties:
+      Description: Policy for Cloud9 Environments used in Change Stream
+      Path: /service-role/
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+            Resource:
+              !Join
+                - ''
+                - - !GetAtt S3BucketFunctionCode.Arn
+                  - '/*'
+          - Effect: Allow
+            Action: 'events:EnableRule'
+            Resource: !GetAtt EventBridgeSchedulerRule.Arn
+          - Effect: Allow
+            Action:
+              - ec2:DescribeSubnets
+              - ec2:DescribeVpcs
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSecurityGroups
+              - lambda:GetFunctionConfiguration
+              - lambda:GetFunction
+              - cloudformation:DescribeChangeSet
+              - cloudformation:DescribeStacks
+              - cloudformation:ListChangeSets
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - cloudformation:CreateStack
+              - cloudformation:CreateChangeSet
+              - cloudformation:ExecuteChangeSet
+            Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/change-streams-function/*'
+          - Effect: Allow
+            Action:
+              - lambda:CreateFunction
+              - lambda:AddPermission
+              - lambda:DeleteFunction
+              - lambda:RemovePermission
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:docdb-opensearch-replicator-v3'
+          # - Effect: Allow
+          #   Action: sns:Subscribe
+          #   Resource: !Ref SNSTopicTrigger
+          - Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt LambdaChangeStreamsRole.Arn
+      Roles:
+        - AWSCloud9SSMAccessRole
+
+  AWSCloud9RolePolicyOld:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: CreateCloud9Policy
+    Properties:
+      Description: Policy for Cloud9 Environments used in Change Stream
+      Path: /service-role/
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+            Resource:
+              !Join
+                - ''
+                - - !GetAtt S3BucketFunctionCode.Arn
+                  - '/*'
+          - Effect: Allow
+            Action: 'events:EnableRule'
+            Resource: !GetAtt EventBridgeSchedulerRule.Arn
+          - Effect: Allow
+            Action:
+              - ec2:DescribeSubnets
+              - ec2:DescribeVpcs
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSecurityGroups
+              - lambda:GetFunctionConfiguration
+              - lambda:GetFunction
+              - cloudformation:DescribeChangeSet
+              - cloudformation:DescribeStacks
+              - cloudformation:ListChangeSets
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - cloudformation:CreateStack
+              - cloudformation:CreateChangeSet
+              - cloudformation:ExecuteChangeSet
+            Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/change-streams-function/*'
+          - Effect: Allow
+            Action:
+              - lambda:CreateFunction
+              - lambda:AddPermission
+              - lambda:DeleteFunction
+              - lambda:RemovePermission
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:docdb-opensearch-replicator-v3'
+          # - Effect: Allow
+          #   Action: sns:Subscribe
+          #   Resource: !Ref SNSTopicTrigger
+          - Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt LambdaChangeStreamsRole.Arn
+      Roles:
+        - AWSCloud9SSMAccessRole
+
+  AWSCloud9SSMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: CreateCloud9InstanceProfile
+    DependsOn: AWSCloud9SSMAccessRole
+    Properties:
+      InstanceProfileName: AWSCloud9SSMInstanceProfile
+      Path: /cloud9/
+      Roles:
+        - AWSCloud9SSMAccessRole
+
+  DocumentDBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Amazon DocumentDB Security Group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+         - IpProtocol: tcp
+           CidrIp: 10.0.0.0/16
+           FromPort: 27017
+           ToPort: 27017
+
+  DocumentDBSubnetGroup:
+    Type: AWS::DocDB::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet Group for DocumentDB
+      SubnetIds:
+         - !Ref PrivateSubnetOne
+         - !Ref PrivateSubnetTwo
+         - !Ref PrivateSubnetThree
+
+  DocumentDBCluster:
+    Type: AWS::DocDB::DBCluster
+    Properties:
+      DBClusterIdentifier: !Ref DocDBIdentifier
+      DBClusterParameterGroupName: !Ref DocumentDBClusterParameterGroup
+      MasterUsername: !Ref DocDBUsername
+      MasterUserPassword: !Ref DocDBPassword
+      DBSubnetGroupName : !Ref DocumentDBSubnetGroup
+      StorageEncrypted: yes
+      EnableCloudwatchLogsExports:
+        - audit
+        - profiler
+      Tags:
+        - Key: Name
+          Value: !Sub DocumentDB-${AWS::StackName}
+      VpcSecurityGroupIds:
+        - !Ref DocumentDBSecurityGroup
+    DependsOn: VPC
+
+  DocumentDBClusterParameterGroup:
+    Type: AWS::DocDB::DBClusterParameterGroup
+    Properties: 
+      Description: DocumentDBClusterParameterGroup
+      Family: docdb4.0
+      Name: !Join [ "-", [!Ref DocDBIdentifier, "DBClusterParameterGroup"] ]
+      Parameters: 
+        audit_logs : "enabled"
+        profiler: "enabled"
+        profiler_sampling_rate: 1.0
+        profiler_threshold_ms: 2000
+        tls: "enabled"
+        ttl_monitor: "enabled"
+        change_stream_log_retention_duration: 86400
+    DependsOn: VPC
+
+  DocumentDBInstanceWriter:
+    Type: AWS::DocDB::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DocumentDBCluster
+      DBInstanceClass: db.r5.large
+      Tags:
+        - Key: Name
+          Value: !Sub DocumentDBInstance-${AWS::StackName}
+
+  Cloud9envNew:
+    Type: AWS::Cloud9::EnvironmentEC2
+    Condition: CreateCloud9InstanceProfile
+    DependsOn: AWSCloud9SSMInstanceProfile
+    Properties:
+      ConnectionType: CONNECT_SSM
+      Description: Cloud9 instance to access Cloud9
+      InstanceType: m5.large
+      Name: ChangeStreamsCloud9
+      SubnetId: !Ref PrivateSubnetOne
+
+  Cloud9envOld:
+    Type: AWS::Cloud9::EnvironmentEC2
+    Condition: CreateCloud9Policy
+    Properties:
+      ConnectionType: CONNECT_SSM
+      Description: Cloud9 instance to access Cloud9
+      InstanceType: m5.large
+      Name: ChangeStreamsCloud9
+      SubnetId: !Ref PrivateSubnetOne
+
+  OpenSearchSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Amazon DocumentDB Security Group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+         - IpProtocol: tcp
+           CidrIp: 10.0.0.0/16
+           FromPort: 443
+           ToPort: 443
+
+  OpenSearchSLR:
+    Type: 'AWS::IAM::ServiceLinkedRole'
+    Properties:
+      AWSServiceName: opensearchservice.amazonaws.com
+
+  OpenSearchDomainLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      RetentionInDays: 365
+
+  OpenSearchLogPolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Properties:
+      PolicyName: opensearch-log-policy
+      PolicyDocument: !Sub '{"Version": "2012-10-17","Statement": [{"Sid": "AllowOpenSearchWriteToCloudWatchLogs","Effect": "Allow","Principal": {"Service": ["es.amazonaws.com"]},"Action": ["logs:PutLogEvents","logs:CreateLogStream"],"Resource": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${OpenSearchDomainLogGroup}:*"}]}'
+
+  OpenSearchDomainKmsKey:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: OpenSearch encryption KMS key
+      EnableKeyRotation: true
+      PendingWindowInDays: 20
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-default-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          # - Sid: Allow administration of the key
+          #   Effect: Allow
+          #   Action:
+          #     - 'kms:List*'
+          #     - 'kms:Describe*'
+          #   Resource: '*'
+          #   Condition:
+          #     StringEquals:
+          #       'kms:ViaService': !Sub 'es.${AWS::Region}.amazonaws.com'
+          #     Bool:
+          #       'kms:GrantIsForAWSResource': true
+    
+  OpenSearchDomain:
+    Type: AWS::OpenSearchService::Domain
+    Properties:
+      EngineVersion: "OpenSearch_2.5"
+      ClusterConfig:
+        InstanceCount: 1
+        InstanceType: "r5.large.search"
+      EBSOptions:
+        EBSEnabled: true
+        VolumeSize: 20
+        VolumeType: "gp3"
+      AccessPolicies:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 'es:*'
+            Resource: !Sub 'arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/*/*'
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_PowerUserAccessSandbox_bd9e9acf25f0eb6d'
+            Action: 'es:*'
+            Resource: !Sub 'arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/*/*'
+      LogPublishingOptions:
+        ES_APPLICATION_LOGS:
+          CloudWatchLogsLogGroupArn: !GetAtt OpenSearchDomainLogGroup.Arn
+          Enabled: true
+        SEARCH_SLOW_LOGS:
+          CloudWatchLogsLogGroupArn: !GetAtt OpenSearchDomainLogGroup.Arn
+          Enabled: true
+        INDEX_SLOW_LOGS:
+          CloudWatchLogsLogGroupArn: !GetAtt OpenSearchDomainLogGroup.Arn
+          Enabled: true
+        AUDIT_LOGS:
+          CloudWatchLogsLogGroupArn: !GetAtt OpenSearchDomainLogGroup.Arn
+          Enabled: true
+      NodeToNodeEncryptionOptions:
+        Enabled: true
+      EncryptionAtRestOptions:
+        Enabled: true
+        KmsKeyId: !Ref OpenSearchDomainKmsKey
+      DomainEndpointOptions:
+        EnforceHTTPS: true
+        TLSSecurityPolicy: Policy-Min-TLS-1-2-2019-07
+      AdvancedSecurityOptions:
+        Enabled: true
+        InternalUserDatabaseEnabled: true
+        MasterUserOptions:
+          MasterUserName: skulabsPOCAdmin
+          MasterUserPassword: skulabsPOCSecretPhr@s3
+      SoftwareUpdateOptions:
+        AutoSoftwareUpdateEnabled: True # Set to True for testing environments. Not recommended for production environments due to stability reasons.
+      # VPCOptions:
+      #   SubnetIds:
+      #     - !Ref PrivateSubnetOne
+      #   SecurityGroupIds:
+      #     - !Ref OpenSearchSecurityGroup
+    UpdatePolicy:
+      EnableVersionUpgrade: True # Set to True if not specified, updating EngineVersion results in replacement.
+    DependsOn: OpenSearchSLR
+
+  # AOSSIAMUser:
+  #   Type: 'AWS::IAM::User'
+  #   Properties:
+  #     UserName: skulabsPOCAossAdmin
+
+  # DataAccessPolicy:
+  #   Type: 'AWS::OpenSearchServerless::AccessPolicy'
+  #   Properties:
+  #     Name: sampledb-tweets-access-policy
+  #     Type: data
+  #     Description: Access policy for sampledb-tweets collection
+  #     Policy: !Sub >-
+  #       [{"Description":"Access for skulabs POC AOSS Admin user","Rules":[{"ResourceType":"index","Resource":["index/*/*"],"Permission":["aoss:*"]}, {"ResourceType":"collection","Resource":["collection/sampledb-tweets"],"Permission":["aoss:*"]}],
+  #       "Principal":["arn:aws:iam::${AWS::AccountId}:user/skulabsPOCAossAdmin"]}]
+
+  # NetworkPolicy:
+  #   Type: 'AWS::OpenSearchServerless::SecurityPolicy'
+  #   Properties:
+  #     Name: sampledb-tweets-network-policy
+  #     Type: network
+  #     Description: Network policy for sampledb-tweets collection
+  #     Policy: >-
+  #       [{"Rules":[{"ResourceType":"collection","Resource":["collection/sampledb-tweets"]}, {"ResourceType":"dashboard","Resource":["collection/sampledb-tweets"]}],"AllowFromPublic":true}]
+
+  # EncryptionPolicy:
+  #   Type: 'AWS::OpenSearchServerless::SecurityPolicy'
+  #   Properties:
+  #     Name: sampledb-tweets-security-policy
+  #     Type: encryption
+  #     Description: Encryption policy for sampledb-tweets collection
+  #     Policy: >-
+  #       {"Rules":[{"ResourceType":"collection","Resource":["collection/sampledb-tweets"]}],"AWSOwnedKey":true}
+
+  # Collection:
+  #   Type: 'AWS::OpenSearchServerless::Collection'
+  #   Properties:
+  #     Name: sampledb-tweets
+  #     Type: SEARCH
+  #     Description: Collection to holds SEARCH data
+  #   DependsOn: EncryptionPolicy
+
+  S3BucketFunctionCode:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+
+  S3BucketStreamingData:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+          Rules: 
+            - Id: "Clean up incomplete mulitpart uploads and expired object delete markers"
+              Status: Enabled
+              AbortIncompleteMultipartUpload: 
+                  DaysAfterInitiation: 3
+              ExpiredObjectDeleteMarker: True
+    DeletionPolicy: Retain
+
+  SQSStreamingData:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: True
+      ContentBasedDeduplication: True
+      DeduplicationScope: queue
+      FifoThroughputLimit: perQueue
+      # KmsDataKeyReusePeriodSeconds: 86400
+      # KmsMasterKeyId: 
+      MaximumMessageSize: 262144
+      MessageRetentionPeriod: 345600
+      QueueName: SQSStreamingData.fifo
+      VisibilityTimeout: !Ref SQSTimeout
+
+  LambdaChangeStreamsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: PublishSNS
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref SNSTopicAlert
+        - PolicyName: SecretsManager
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref DocDBSecret
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: 'arn:aws:s3:::rds-downloads/rds-combined-ca-bundle.pem'
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource: '*'
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:*
+                Resource: '*'
+      Path:
+        Fn::Sub: /
+
+  TriggerLambdaFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: TriggerLambdaFunctionRolePolicy1
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource:
+                  - !GetAtt StreamingLambdaFunction.Arn
+      Path:
+        Fn::Sub: /
+
+  TriggerLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref S3BucketFunctionCode
+        S3Key: triggerLambda.zip
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt TriggerLambdaFunctionRole.Arn
+      Runtime: python3.10
+      Description: "AWS Lambda used to trigger StreamingLambdaFunction every second for 15 minutes"
+      Environment:
+        Variables:
+          AWS_REGION_NAME: !Ref AWS::Region
+          LAMBDA_FUNCTION_NAME: !GetAtt StreamingLambdaFunction.Arn
+          INVOCATION_TYPE: Event
+          TRIGGER_LAMBDA_TIMEOUT: !Ref TriggerLambdaTimeout
+          INVOCATION_TIME_INTERVAL: !Ref TriggerLambdaInterval
+          LOGLEVEL: DEBUG
+      FunctionName: trigger-lambda
+      MemorySize: 128
+      Timeout: 660
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref OpenSearchSecurityGroup
+          - !Ref DocumentDBSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnetOne
+          - !Ref PrivateSubnetTwo
+          - !Ref PrivateSubnetThree
+
+  TriggerLambdaAllowEventBridgeInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt TriggerLambdaFunction.Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventBridgeSchedulerRule.Arn
+
+  StreamingLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref S3BucketFunctionCode
+        S3Key: docdbSqsWriterLambda.zip
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaChangeStreamsRole.Arn
+      Runtime: python3.10
+      Description: "AWS Lambda used to replicate change events from Amazon DocumentDB to Amazon OpenSearch service"
+      Environment:
+        Variables:
+          AWS_REGION_NAME: !Ref AWS::Region
+          DOCUMENTDB_SECRET: !Sub "DocDBSecret-${AWS::StackName}"
+          DOCUMENTDB_URI: !GetAtt DocumentDBCluster.Endpoint
+          Documents_per_run: 1000
+          SNS_TOPIC_ARN_ALERT: !Ref SNSTopicAlert
+          STATE_COLLECTION: statecol
+          STATE_DB: statedb
+          Iterations_per_sync: 15
+          WATCHED_DB_NAME: sampledb
+          # OPENSEARCH_URI: https://vpc-opensearchdomai-eulkc8kwhm8c-x4axkmyi327d4oinfgqi447ibi.us-east-1.es.amazonaws.com
+          BUCKET_NAME: !Ref S3BucketStreamingData
+          SQS_QUERY_URL: !Ref SQSStreamingData
+          LOGLEVEL: INFO
+      FunctionName: docdb-sqs-writer-lambda
+      MemorySize: 128
+      Timeout: 60
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref OpenSearchSecurityGroup
+          - !Ref DocumentDBSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnetOne
+          - !Ref PrivateSubnetTwo
+          - !Ref PrivateSubnetThree
+
+  SQSLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: PublishSNS
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref SNSTopicAlert
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource: '*'
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:*
+                Resource: '*'
+      Path:
+        Fn::Sub: /
+
+  SQSLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref S3BucketFunctionCode
+        S3Key: openSearchWriterLambda.zip
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt SQSLambdaRole.Arn
+      Runtime: python3.10
+      Description: "AWS Lambda used to get SQS messages and fetch S3 objects to write to Amazon OpenSearch service"
+      Environment:
+        Variables:
+          AWS_REGION_NAME: !Ref AWS::Region
+          SNS_TOPIC_ARN_ALERT: !Ref SNSTopicAlert
+          OPENSEARCH_URI: !GetAtt OpenSearchDomain.DomainEndpoint
+          OPENSEARCH_USER: skulabsPOCAdmin
+          OPENSEARCH_PASS: skulabsPOCSecretPhr@s3
+          LOGLEVEL: DEBUG
+      FunctionName: opensearch-writer-lambda
+      MemorySize: 128
+      Timeout: !Ref SQSTimeout
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref OpenSearchSecurityGroup
+          - !Ref DocumentDBSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnetOne
+          - !Ref PrivateSubnetTwo
+          - !Ref PrivateSubnetThree
+
+  SQSAllowInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+          - SQSLambdaFunction
+          - Arn
+      Principal: sqs.amazonaws.com
+
+  LambdaFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      Enabled: true
+      EventSourceArn: !GetAtt SQSStreamingData.Arn
+      FunctionName: !GetAtt SQSLambdaFunction.Arn
+      
+  # CloudWatch Alarm on number of messages greater than 100 
+  SQSQueueDepthAlarm: 
+    Type: AWS::CloudWatch::Alarm
+    Properties: 
+      AlarmDescription: "Alarm if queue depth increases to more than 100 messages"
+      Namespace: "AWS/SQS"
+      MetricName: "ApproximateNumberOfMessagesVisible"
+      Dimensions: 
+        - 
+          Name: QueueName
+          Value: !GetAtt SQSStreamingData.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 100
+      ComparisonOperator: "GreaterThanThreshold"
+      AlarmActions: 
+        - 
+          !Ref SNSTopicAlert
+      InsufficientDataActions: 
+        - 
+          !Ref SNSTopicAlert
+
+  # Create a SQS VPC Endpoint
+  SQSVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:      
+      SecurityGroupIds:
+        - !Ref OpenSearchSecurityGroup
+        - !Ref DocumentDBSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.sqs'
+      SubnetIds:
+        - !Ref PrivateSubnetOne
+        - !Ref PrivateSubnetTwo
+        - !Ref PrivateSubnetThree
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+
+  # Create a S3 Endpoint
+  S3VpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      VpcId: !Ref VPC
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+  PrivateSubnetOne:
+    Value: !Ref PrivateSubnetOne
+  PrivateSubnetTwo:
+    Value: !Ref PrivateSubnetTwo
+  PrivateSubnetThree:
+    Value: !Ref PrivateSubnetThree
+  StackName:
+    Value: !Sub ${AWS::StackName}
+  DocumentDBIdentifier:
+    Value: !Ref DocumentDBCluster
+  DocumentDBEndpoint:
+    Value: !GetAtt DocumentDBCluster.Endpoint
+  DocumentDBSecurityGroup:
+    Value: !Ref DocumentDBSecurityGroup
+  # SNSTopicTrigger:
+  #   Value: !Ref SNSTopicTrigger
+  SNSTopicAlert:
+    Value: !Ref SNSTopicAlert
+  DocDBSecretArn:
+    Value: !Ref DocDBSecret
+  DocDBSecretName:
+    Value: !Sub "DocDBSecret-${AWS::StackName}"
+  OpenSearchDomainArn:
+    Value: !GetAtt OpenSearchDomain.Arn
+  OpenSearchDomainEndpoint:
+    Value: !GetAtt OpenSearchDomain.DomainEndpoint
+  OpenSearchSecurityGroup:
+    Value: !Ref OpenSearchSecurityGroup
+  RoleArn:
+    Value: !GetAtt LambdaChangeStreamsRole.Arn
+  S3BucketName:
+    Value: !Ref S3BucketFunctionCode
+  EventBridgeSchedulerRule:
+    Value: !Ref EventBridgeSchedulerRule
+  S3BucketStreamingData:
+    Value: !Ref S3BucketStreamingData
+  SQSStreamingData:
+    Value: !Ref SQSStreamingData
+  # AOSSIAMUser:
+  #   Value: !Ref AOSSIAMUser
+  # DashboardURL:
+  #   Value: !GetAtt Collection.DashboardEndpoint
+  # CollectionARN:
+  #   Value: !GetAtt Collection.Arn
+  TimeoutSecondsToCronExprConverterValue:
+    Value: !GetAtt TimeoutSecondsToCronExprConverter.Value
