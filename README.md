@@ -52,3 +52,29 @@ Deploy Amazon OpenSearch + DocumentDB and ensure changes in DocumentDB are appli
 7. A message on the Amazon SQS FIFO Queue triggers the `OpenSearchIngestLambdaFunction` to read messages as they come in and perform necessary data transformations before writing the changes into OpenSearch.
 
 8. Now the application is able to query OpenSearch and get results with the new changes on DocumentDB.
+
+### Build
+
+To replicate the same setup, follow these steps
+
+1. Upload the GitHub repository contents onto an S3 BUCKET, hereinafter referred to as `S3_CLOUDFORMATION_BUCKET`.
+
+2. Run the CloudFormation template provided within `cloudformation` folder, passing the necessary parameters as needed.
+
+| Key | Value|
+| --- | ---- | 
+| DocDBIdentifier | documentdb |
+| DocDBPassword | **** |
+| DocDBUsername |	docDBUser |
+| ExistingCloud9Role | false |
+| SQSTimeout | 60 |
+| TriggerLambdaInterval | 1 |
+| TriggerLambdaTimeout | 600 |
+
+Follow the next steps if you make changes to the 
+
+3. Update `package.sh` with the `S3_CLOUDFORMATION_BUCKET` bucket name you created from Build Step 1. Also update `S3_LAMBDA_BUCKET` with the  `S3BucketName` from the CloudFormation Output section.
+
+4. Run `package.sh` to package the Lambda function code and upload it to `S3_LAMBDA_BUCKET`. Any changes to the CloudFormation template deployed in Build Step 1 would be upload to `S3_CLOUDFORMATION_BUCKET`.
+
+5. Ensure the Lambda functions have the latest
