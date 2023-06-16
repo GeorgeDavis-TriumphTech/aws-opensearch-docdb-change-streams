@@ -9,7 +9,7 @@ Deploy Amazon OpenSearch + DocumentDB and ensure changes in DocumentDB are appli
 
 2. The `triggerLambdaFunction` then invokes the `DocDBChangeLambdaFunction`, every second for 10 minutes, before it times out and another instance gets triggered by Step 1, to take on invocations every second for the next 10 minutes. One of the project requirements were to check every second for changes on DocumentDB to keep OpenSearch updated.
 
-3. `DocDBChangeLambdaFunction` Lambda function checks DocumentDB using IAM authentication for changes on DocumentDB and requests a `full_document` in the response, using `full_document='updateLookup'` in the request. This ensures DocumentDB responds with the updated state of the document as-is at the time on DocumentDB.
+3. `DocDBChangeLambdaFunction` Lambda function checks DocumentDB for changes and requests a `full_document` in the response, using `full_document='updateLookup'` in the request. This ensures DocumentDB responds with the updated state of the document as-is at the time on DocumentDB.
 
 4. `DocDBChangeLambdaFunction` then takes the response for each change and writes the `full_document` section of the change stream to a versioned S3 Bucket. 
 
@@ -55,11 +55,11 @@ Deploy Amazon OpenSearch + DocumentDB and ensure changes in DocumentDB are appli
 
 ### Build
 
-To replicate the same setup, follow these steps
+To replicate the same setup, follow these steps -
 
 1. Upload the GitHub repository contents onto an S3 BUCKET, hereinafter referred to as `S3_CLOUDFORMATION_BUCKET`.
 
-2. Run the CloudFormation template provided within `cloudformation` folder, passing the necessary parameters as needed.
+2. Run the CloudFormation template provided within `cloudformation` folder, passing the following parameters as needed.
 
 | Key | Value|
 | --- | ---- | 
@@ -71,10 +71,13 @@ To replicate the same setup, follow these steps
 | TriggerLambdaInterval | 1 |
 | TriggerLambdaTimeout | 600 |
 
-Follow the next steps if you make changes to the 
+> Follow the next steps if you make changes to the AWS Lambda function code written in Python.
 
-3. Update `package.sh` with the `S3_CLOUDFORMATION_BUCKET` bucket name you created from Build Step 1. Also update `S3_LAMBDA_BUCKET` with the  `S3BucketName` from the CloudFormation Output section.
+3. Update `package.sh` with the `S3_CLOUDFORMATION_BUCKET` bucket name you created from Build Step 1 and `S3_LAMBDA_BUCKET` with the  `S3BucketName` from the CloudFormation Outputs section.
 
-4. Run `package.sh` to package the Lambda function code and upload it to `S3_LAMBDA_BUCKET`. Any changes to the CloudFormation template deployed in Build Step 1 would be upload to `S3_CLOUDFORMATION_BUCKET`.
+4. Running `package.sh`
+    - to package our Lambda function code
+    - upload the packaged zip files to `S3_LAMBDA_BUCKET`
+    - any changes to the CloudFormation template would also be uploaded to `S3_CLOUDFORMATION_BUCKET`.
 
-5. Ensure the Lambda functions have the latest
+5. Ensure the Lambda functions are using the latest version of the code from the `S3_LAMBDA_BUCKET`.
